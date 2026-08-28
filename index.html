@@ -118,6 +118,10 @@
   .h-amt.plus { color: var(--green); }
   .h-amt.minus { color: var(--red); }
   .empty { color: var(--muted); font-size: 16px; padding: 6px 0; }
+  .h-del {
+    margin-left: 12px; background: var(--red); color: #fff; box-shadow: none;
+    border-radius: 50%; width: 30px; height: 30px; font-size: 15px; flex-shrink: 0;
+  }
 
   .grownup-note { font-size: 13px; color: var(--muted); margin: 0 2px 12px; line-height: 1.45; }
   .grownup-actions { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -206,6 +210,8 @@
         <button class="mini" onclick="unlockGrownup()">🔒 Unlock grown-up buttons</button>
       </div>
       <div class="grownup-actions" id="grownup-open" style="display:none;">
+        <button class="mini" onclick="openSheet('setbalance')">✏️ Set balance</button>
+        <button class="mini" id="edit-history-btn" onclick="toggleEditHistory()">🗑️ Edit history</button>
         <button class="mini" onclick="skipWeek()">⏩ Test: skip ahead 1 week</button>
         <button class="mini danger" onclick="resetAll()">Reset everything</button>
         <button class="mini" onclick="lockGrownup()">🔒 Lock again</button>
@@ -381,16 +387,20 @@
     if (state.history.length === 0) {
       list.innerHTML = '<li class="empty">Nothing yet — put some money in! 🐷</li>';
     } else {
-      state.history.slice().reverse().slice(0, 20).forEach(h => {
+      let shown = 0;
+      for (let i = state.history.length - 1; i >= 0 && shown < 20; i--, shown++) {
+        const h = state.history[i];
         const li = document.createElement("li");
         const sign = h.amount >= 0 ? "plus" : "minus";
         const label = h.amount >= 0 ? "+" + fmt(h.amount) : "-" + fmt(-h.amount);
+        const del = editingHistory
+          ? '<button class="h-del" onclick="deleteEntry(' + i + ')">✕</button>' : "";
         li.innerHTML =
           '<span class="h-left"><span class="h-emoji">' + h.emoji + '</span>' +
           '<span><div>' + h.label + '</div><div class="h-when">' + h.when + '</div></span></span>' +
-          '<span class="h-amt ' + sign + '">' + label + '</span>';
+          '<span class="h-amt ' + sign + '">' + label + '</span>' + del;
         list.appendChild(li);
-      });
+      }
     }
   }
 
@@ -403,12 +413,14 @@
   function openSheet(m) {
     render();
     mode = m; entryCents = 0;
-    document.getElementById("sheet-title").textContent =
-      m === "deposit" ? "Put money in 🐷" : "Take money out 💸";
+    const title = m === "deposit" ? "Put money in 🐷"
+      : m === "withdraw" ? "Take money out 💸" : "✏️ Set the balance";
+    document.getElementById("sheet-title").textContent = title;
     document.getElementById("sheet-avail").textContent =
-      m === "withdraw" ? "You have " + fmt(state.balance) + " to take out" : "";
+      m === "withdraw" ? "You have " + fmt(state.balance) + " to take out"
+      : m === "setbalance" ? "Type the correct total, then Done" : "";
     document.getElementById("confirm-btn").className =
-      "confirm " + (m === "deposit" ? "deposit-c" : "withdraw-c");
+      "confirm " + (m === "withdraw" ? "withdraw-c" : "deposit-c");
     updateEntry();
     document.getElementById("overlay").classList.add("show");
   }
@@ -420,11 +432,16 @@
   }
   function updateEntry() {
     document.getElementById("amount-display").textContent = fmt(entryCents);
-    let ok = entryCents > 0;
+    let ok = mode === "setbalance" ? entryCents >= 0 : entryCents > 0;
     if (mode === "withdraw" && entryCents > state.balance) ok = false;
     document.getElementById("confirm-btn").disabled = !ok;
   }
   function confirmSheet() {
+    if (mode === "setbalance") {
+      state.balance = entryCents;          // grown-up correction, no history entry
+      save(); render(); popBalance(); closeSheet();
+      return;
+    }
     if (entryCents <= 0) return;
     if (mode === "deposit") {
       if (state.balance <= 0) state.lastInterest = mostRecentFriday(new Date()).getTime();  // start clock at this Friday
@@ -482,6 +499,17 @@
   }
 
   // ---- Grown-up tools ----
+  let editingHistory = false;
+  function toggleEditHistory() {
+    editingHistory = !editingHistory;
+    document.getElementById("edit-history-btn").textContent =
+      editingHistory ? "✅ Done editing" : "🗑️ Edit history";
+    render();
+  }
+  function deleteEntry(i) {
+    state.history.splice(i, 1);   // removes just this log row; use "Set balance" to fix the number
+    save(); render();
+  }
   function skipWeek() {
     state.lastInterest -= WEEK_MS; save(); render();  // makes one Friday's interest available to collect
   }
