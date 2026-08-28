@@ -522,7 +522,13 @@
     render();
   }
   function deleteEntry(i) {
-    state.history.splice(i, 1);   // removes just this log row; use "Set balance" to fix the number
+    const h = state.history[i];
+    if (h) {
+      state.balance -= h.amount;   // undo this transaction's effect on the money (interest, deposit, etc.)
+      if (state.balance < 0) state.balance = 0;
+      state.principal = Math.min(state.principal, state.balance);
+    }
+    state.history.splice(i, 1);
     save(); render();
   }
   function skipWeek() {
