@@ -188,7 +188,7 @@
 
     <div class="grownup-card">
       <p class="card-title">🔒 Grown-up</p>
-      <p class="grownup-note">Interest happens by itself: the bank pays 5% every week the money stays saved, and it stacks (week 2 earns interest on week 1's interest). You don't have to do anything.</p>
+      <p class="grownup-note">Interest happens by itself every Friday: the bank pays 5% of whatever's saved, and it stacks (each Friday earns interest on the Friday before). You don't have to do anything.</p>
       <div class="grownup-actions" id="grownup-locked">
         <button class="mini" onclick="unlockGrownup()">🔒 Unlock grown-up buttons</button>
       </div>
@@ -272,13 +272,37 @@
   let entryCents = 0;
 
   function load() {
+    let s = { balance: 0, history: [], lastInterest: null, v: 2 };  // balance in cents
     try {
       const raw = localStorage.getItem(STORE);
-      if (raw) return JSON.parse(raw);
+      if (raw) s = JSON.parse(raw);
     } catch (e) {}
-    return { balance: 0, history: [], lastInterest: Date.now() };  // balance in cents
+    return migrate(s);
+  }
+  // Move any old (7-day-model) saver onto the Friday model.
+  function migrate(s) {
+    if (s.v === 2 && s.lastInterest) return s;
+    const now = new Date();
+    if (s.balance > 0) {
+      // Already has savings: seed to LAST week's Friday so this week's Friday pays out now.
+      const prev = mostRecentFriday(now);
+      prev.setDate(prev.getDate() - 7);
+      s.lastInterest = prev.getTime();
+    } else {
+      s.lastInterest = mostRecentFriday(now).getTime();
+    }
+    s.v = 2;
+    return s;
   }
   function save() { localStorage.setItem(STORE, JSON.stringify(state)); }
+
+  // The most recent Friday at local midnight, on or before `date`.
+  function mostRecentFriday(date) {
+    const d = new Date(date); d.setHours(0, 0, 0, 0);
+    const diff = (d.getDay() - 5 + 7) % 7;   // days since last Friday (0 = today is Friday)
+    d.setDate(d.getDate() - diff);
+    return d;
+  }
 
   function fmt(cents) { return "$" + (cents / 100).toFixed(2); }
   function today() {
@@ -288,30 +312,38 @@
     state.history.push({ label, emoji, amount, when: today() });
   }
 
-  // ---- Time-based interest: figure out what's owed since last time ----
+  // ---- Interest pays out every Friday: figure out what's owed since last time ----
   function accrue() {
-    const now = Date.now();
-    if (!state.lastInterest) state.lastInterest = now;
+    const now = new Date();
+    if (!state.lastInterest) state.lastInterest = mostRecentFriday(now).getTime();
 
-    if (state.balance <= 0) {   // nothing saved -> nothing to earn; keep clock at "now"
-      state.lastInterest = now; save(); return 0;
+    if (state.balance <= 0) {   // nothing saved -> nothing to earn; hold clock at this Friday
+      state.lastInterest = mostRecentFriday(now).getTime(); save(); return 0;
     }
 
-    let weeks = Math.floor((now - state.lastInterest) / WEEK_MS);
+    const thisFriday = mostRecentFriday(now).getTime();
+    // Both endpoints are Friday-midnights, so this is a clean count of Fridays owed.
+    let weeks = Math.round((thisFriday - state.lastInterest) / WEEK_MS);
     if (weeks < 1) return 0;
 
     const before = state.balance;
-    for (let i = 0; i < weeks; i++) state.balance += Math.round(state.balance * RATE);  // compound weekly
+    for (let i = 0; i < weeks; i++) state.balance += Math.round(state.balance * RATE);  // compound each Friday
     const earned = state.balance - before;
-    state.lastInterest += weeks * WEEK_MS;   // carry the leftover partial week forward
-    log(weeks === 1 ? "Bank paid interest 💛" : "Bank paid " + weeks + " weeks interest 💛", "🦄", earned);
+    state.lastInterest = thisFriday;
+    log(weeks === 1 ? "Friday interest 💛" : weeks + " Fridays of interest 💛", "🦄", earned);
     save();
     return earned;
   }
 
   function daysUntilNextInterest() {
-    const msLeft = (state.lastInterest + WEEK_MS) - Date.now();
-    return Math.max(0, Math.ceil(msLeft / (24 * 60 * 60 * 1000)));
+    const now = new Date();
+    const midnight = new Date(now); midnight.setHours(0, 0, 0, 0);
+    let diff = (5 - midnight.getDay() + 7) % 7;   // days until Friday (0 = today is Friday)
+    if (diff === 0) {
+      // Today is Friday: interest is ready now unless it's already been paid today.
+      return state.lastInterest < mostRecentFriday(now).getTime() ? 0 : 7;
+    }
+    return diff;
   }
 
   function render() {
@@ -380,7 +412,7 @@
   function confirmSheet() {
     if (entryCents <= 0) return;
     if (mode === "deposit") {
-      if (state.balance <= 0) state.lastInterest = Date.now();  // start the clock on first savings
+      if (state.balance <= 0) state.lastInterest = mostRecentFriday(new Date()).getTime();  // start clock at this Friday
       state.balance += entryCents;
       log("Put money in", "🐷", entryCents);
     } else {
@@ -442,7 +474,7 @@
   }
   function resetAll() {
     if (confirm("Reset the balance to $0 and clear all history?")) {
-      state = { balance: 0, history: [], lastInterest: Date.now() };
+      state = { balance: 0, history: [], lastInterest: mostRecentFriday(new Date()).getTime(), v: 2 };
       save(); render();
     }
   }
