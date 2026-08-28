@@ -146,7 +146,13 @@
   .keypad button { background: #f4eeff; color: var(--ink); font-size: 26px; padding: 18px 0; box-shadow: none; }
   .sheet-actions { display: flex; gap: 12px; margin-top: 16px; }
   .sheet-actions button { flex: 1; padding: 18px; font-size: 19px; }
-  .cancel { background: #ece4fb; color: var(--ink); box-shadow: none; }
+  .cancel { background: #ece4fb; color: var(--ink); box-shadow: none; width: 100%; padding: 16px; font-size: 18px; margin-top: 12px; }
+  .when-options { display: flex; flex-direction: column; gap: 10px; }
+  .when-options button {
+    background: var(--green); color: #fff; box-shadow: 0 5px 0 var(--green-dark);
+    padding: 16px; font-size: 19px;
+  }
+  .when-options button span { font-size: 13px; opacity: 0.85; font-weight: 600; }
   .confirm { color: #fff; }
   .confirm.deposit-c { background: var(--green); }
   .confirm.withdraw-c { background: var(--red); }
@@ -211,6 +217,7 @@
       </div>
       <div class="grownup-actions" id="grownup-open" style="display:none;">
         <button class="mini" onclick="openSheet('setbalance')">✏️ Set balance</button>
+        <button class="mini" onclick="openSheet('pastdeposit')">📅 Add past deposit</button>
         <button class="mini" id="edit-history-btn" onclick="toggleEditHistory()">🗑️ Edit history</button>
         <button class="mini" onclick="skipWeek()">⏩ Make a Friday's interest ready</button>
         <button class="mini danger" onclick="resetAll()">Reset everything</button>
@@ -266,6 +273,21 @@
         <button onclick="pinKey('0')">0</button>
         <button onclick="closePin()" style="font-size:16px;">Cancel</button>
       </div>
+    </div>
+  </div>
+
+  <!-- "When did she save it?" chooser for a past deposit -->
+  <div class="overlay" id="when-overlay">
+    <div class="sheet">
+      <h2>📅 When did she save it?</h2>
+      <div class="avail" id="when-amt"></div>
+      <div class="when-options">
+        <button onclick="commitPastDeposit(1)">Last Friday <span>(earns this Friday)</span></button>
+        <button onclick="commitPastDeposit(2)">2 Fridays ago</button>
+        <button onclick="commitPastDeposit(3)">3 Fridays ago</button>
+        <button onclick="commitPastDeposit(4)">4 Fridays ago</button>
+      </div>
+      <button class="cancel" onclick="closeWhen()">Cancel</button>
     </div>
   </div>
 
@@ -427,11 +449,13 @@
     render();
     mode = m; entryCents = 0;
     const title = m === "deposit" ? "Put money in 🐷"
-      : m === "withdraw" ? "Take money out 💸" : "✏️ Set the balance";
+      : m === "withdraw" ? "Take money out 💸"
+      : m === "pastdeposit" ? "📅 Add past deposit" : "✏️ Set the balance";
     document.getElementById("sheet-title").textContent = title;
     document.getElementById("sheet-avail").textContent =
       m === "withdraw" ? "You have " + fmt(state.balance) + " to take out"
-      : m === "setbalance" ? "Type the correct total, then Done" : "";
+      : m === "setbalance" ? "Type the correct total, then Done"
+      : m === "pastdeposit" ? "Money she saved before today" : "";
     document.getElementById("confirm-btn").className =
       "confirm " + (m === "withdraw" ? "withdraw-c" : "deposit-c");
     updateEntry();
@@ -456,6 +480,14 @@
       save(); render(); popBalance(); closeSheet();
       return;
     }
+    if (mode === "pastdeposit") {
+      if (entryCents <= 0) return;
+      pendingPastAmount = entryCents;      // hold the amount, then ask which past Friday
+      document.getElementById("when-amt").textContent = fmt(entryCents) + " — pick when she saved it";
+      closeSheet();
+      document.getElementById("when-overlay").classList.add("show");
+      return;
+    }
     if (entryCents <= 0) return;
     if (mode === "deposit") {
       if (state.balance <= 0) state.lastInterest = mostRecentFriday(new Date()).getTime();  // start clock at this Friday
@@ -468,6 +500,25 @@
       log("Took money out", "💸", -entryCents);
     }
     save(); render(); popBalance(); closeSheet();
+  }
+
+  // ---- Add a past (already-saved) deposit ----
+  let pendingPastAmount = 0;
+  function closeWhen() { document.getElementById("when-overlay").classList.remove("show"); }
+  function commitPastDeposit(fridaysAgo) {
+    const amt = pendingPastAmount;
+    if (amt > 0) {
+      const depFriday = mostRecentFriday(new Date());
+      depFriday.setDate(depFriday.getDate() - fridaysAgo * 7);   // the Friday she saved it
+      state.balance += amt;
+      state.principal += amt;                                    // already saved -> eligible to earn
+      const depTime = depFriday.getTime();
+      state.lastInterest = Math.min(state.lastInterest || depTime, depTime);  // owe every Friday since
+      const whenStr = depFriday.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      state.history.push({ label: "Put money in", emoji: "🐷", amount: amt, when: whenStr });
+      save(); render(); popBalance();
+    }
+    closeWhen();
   }
 
   // ---- Celebration ----
@@ -543,6 +594,9 @@
 
   document.getElementById("overlay").addEventListener("click", function(e) {
     if (e.target === this) closeSheet();
+  });
+  document.getElementById("when-overlay").addEventListener("click", function(e) {
+    if (e.target === this) closeWhen();
   });
 
   // ---- Floating sparkles in the background ----
