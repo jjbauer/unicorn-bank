@@ -205,7 +205,7 @@
 
     <div class="grownup-card">
       <p class="card-title">🔒 Grown-up</p>
-      <p class="grownup-note">Every Friday, 5% interest becomes ready and the rainbow "Collect" button appears for her to tap. It stacks (each Friday earns interest on the Friday before) and waits for her even if she misses a week.</p>
+      <p class="grownup-note">Every Friday, 5% interest becomes ready and the rainbow "Collect" button appears for her to tap. New money skips the very next Friday and starts earning the one after, so it has to be saved a full week before it grows — a deposit never earns interest the same week it's added. It stacks and waits for her even if she misses a week.</p>
       <div class="grownup-actions" id="grownup-locked">
         <button class="mini" onclick="unlockGrownup()">🔒 Unlock grown-up buttons</button>
       </div>
@@ -291,26 +291,27 @@
   let entryCents = 0;
 
   function load() {
-    let s = { balance: 0, history: [], lastInterest: null, v: 2 };  // balance in cents
+    // balance in cents; principal = money saved through a full week (only this earns interest)
+    let s = { balance: 0, history: [], lastInterest: null, principal: 0, v: 3 };
     try {
       const raw = localStorage.getItem(STORE);
       if (raw) s = JSON.parse(raw);
     } catch (e) {}
     return migrate(s);
   }
-  // Move any old (7-day-model) saver onto the Friday model.
   function migrate(s) {
-    if (s.v === 2 && s.lastInterest) return s;
     const now = new Date();
-    if (s.balance > 0) {
-      // Already has savings: seed to LAST week's Friday so this week's Friday pays out now.
-      const prev = mostRecentFriday(now);
-      prev.setDate(prev.getDate() - 7);
-      s.lastInterest = prev.getTime();
-    } else {
-      s.lastInterest = mostRecentFriday(now).getTime();
+    if (!s.lastInterest) {                       // move an old 7-day saver onto the Friday model
+      if (s.balance > 0) {
+        const prev = mostRecentFriday(now);
+        prev.setDate(prev.getDate() - 7);        // seed to last Friday so this Friday can pay out
+        s.lastInterest = prev.getTime();
+      } else {
+        s.lastInterest = mostRecentFriday(now).getTime();
+      }
     }
-    s.v = 2;
+    if (s.principal === undefined) s.principal = s.balance;   // existing money counts as already-saved
+    s.v = 3;
     return s;
   }
   function save() { localStorage.setItem(STORE, JSON.stringify(state)); }
@@ -339,19 +340,31 @@
     // Both endpoints are Friday-midnights, so this is a clean count of Fridays owed.
     const weeks = Math.round((thisFriday - state.lastInterest) / WEEK_MS);
     if (weeks < 1) return { weeks: 0, amount: 0 };
-    let bal = state.balance;
-    for (let i = 0; i < weeks; i++) bal += Math.round(bal * RATE);  // compound each Friday
+    let bal = state.balance, prin = state.principal;
+    for (let i = 0; i < weeks; i++) {
+      bal += Math.round(prin * RATE);   // only money saved a full week earns
+      prin = bal;                       // after a Friday, everything counts for the next one
+    }
     return { weeks, amount: bal - state.balance };
   }
 
   // She tapped the big Collect button.
   function collectInterest() {
-    const owed = interestOwed();
-    if (owed.amount <= 0) return;
-    state.balance += owed.amount;
-    state.lastInterest = mostRecentFriday(new Date()).getTime();
-    log(owed.weeks === 1 ? "Friday interest 💛" : owed.weeks + " Fridays of interest 💛", "🦄", owed.amount);
-    save(); render(); popBalance(); showCelebrate(owed.amount);
+    if (state.balance <= 0 || !state.lastInterest) return;
+    const thisFriday = mostRecentFriday(new Date()).getTime();
+    const weeks = Math.round((thisFriday - state.lastInterest) / WEEK_MS);
+    if (weeks < 1) return;
+    const before = state.balance;
+    for (let i = 0; i < weeks; i++) {
+      state.balance += Math.round(state.principal * RATE);  // interest on saved-a-full-week money only
+      state.principal = state.balance;                      // now all of it is eligible next Friday
+    }
+    state.lastInterest = thisFriday;
+    const earned = state.balance - before;
+    save();
+    if (earned <= 0) { render(); return; }   // money's still too new — nothing to celebrate yet
+    log(weeks === 1 ? "Friday interest 💛" : weeks + " Fridays of interest 💛", "🦄", earned);
+    render(); popBalance(); showCelebrate(earned);
   }
 
   function daysUntilNextInterest() {
@@ -438,18 +451,20 @@
   }
   function confirmSheet() {
     if (mode === "setbalance") {
-      state.balance = entryCents;          // grown-up correction, no history entry
+      state.balance = entryCents;
+      state.principal = entryCents;        // treat the corrected total as already-saved money
       save(); render(); popBalance(); closeSheet();
       return;
     }
     if (entryCents <= 0) return;
     if (mode === "deposit") {
       if (state.balance <= 0) state.lastInterest = mostRecentFriday(new Date()).getTime();  // start clock at this Friday
-      state.balance += entryCents;
+      state.balance += entryCents;         // principal unchanged: new money earns starting a later Friday
       log("Put money in", "🐷", entryCents);
     } else {
       if (entryCents > state.balance) return;
       state.balance -= entryCents;
+      state.principal = Math.min(state.principal, state.balance);  // can't earn on money taken out
       log("Took money out", "💸", -entryCents);
     }
     save(); render(); popBalance(); closeSheet();
@@ -515,7 +530,7 @@
   }
   function resetAll() {
     if (confirm("Reset the balance to $0 and clear all history?")) {
-      state = { balance: 0, history: [], lastInterest: mostRecentFriday(new Date()).getTime(), v: 2 };
+      state = { balance: 0, history: [], lastInterest: mostRecentFriday(new Date()).getTime(), principal: 0, v: 3 };
       save(); render();
     }
   }
